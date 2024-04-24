@@ -34,6 +34,7 @@ else:
 
 optimizer=torch.optim.AdamW(model.parameters(),lr=0.001)
 criterion=nn.MSELoss()
+scaler = torch.cuda.amp.GradScaler()
 model.train()
 for epoch in range(hp.num_epochs):
     i=0
@@ -45,17 +46,20 @@ for epoch in range(hp.num_epochs):
         mel,text=mel.to(device),text.to(device)
         mel_postnet,mel_linear=model(mel,text)
         loss=criterion(mel_postnet,mel)+criterion(mel_linear,mel)
-        loss.backward()
-        optimizer.step()
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), hp.grad_clip)
+        scaler.step(optimizer)
+        scaler.update()
         total_loss+=loss.item()
         i+=1
         
         if i%100==0:
             print(loss)
             torch.save(model.state_dict(),os.path.join(cwd,hp.save_name))
-    print('Epoch Loss:',total_loss)
+    print(f'Epoch {epoch+1}/{hp.num_epochs} Loss:',total_loss)
 
-text = util.text_to_seq("Hello, world.").unsqueeze(0).to(device)
+text = util.text_to_seq("Hello").unsqueeze(0).to(device)
 mel_postnet=model.inference(text)
 pseudo_wav=util.inverse_mel_spec_to_wav(mel_postnet.transpose(1,2)[0])
 torchaudio.save(os.path.join(cwd,'audio.wav'), pseudo_wav.unsqueeze(0).detach().cpu(), hp.sr,format="wav")
