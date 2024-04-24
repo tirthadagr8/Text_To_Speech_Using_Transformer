@@ -48,9 +48,9 @@ class PositionalEmbeddings(nn.Module):
     def __init__(self):
         super().__init__()
         self.positionalembedding=nn.Embedding(hp.max_mel_time,hp.embedding_size)
-    def forward(self,x):
+    def forward(self):
         x1=self.positionalembedding(torch.arange(hp.max_mel_time).to(device))
-        return x+x1[:x.shape[1]]
+        return x1
     
 
 class MultiHeadAttentionBlock(nn.Module):
@@ -86,7 +86,7 @@ class EncoderBlock(nn.Module):
         x_out=self.dropout(x_out)
         x=x+x_out
         x_out=self.normlayer2(x)
-        x_out=self.dropout1(self.linear1(x_out))
+        x_out=self.dropout1(F.relu(self.linear1(x_out)))
         x_out=self.dropout2(self.linear2(x_out))
         x=x+x_out
         
@@ -104,11 +104,9 @@ class PreProcess_Mel_Spec(nn.Module):
             nn.ReLU(),
             nn.Dropout(hp.dropout)
             )
-        self.positional_embeddings=PositionalEmbeddings()
 
     def forward(self,x):
-        mel_x=self.preprocess(x)
-        return self.positional_embeddings(mel_x)
+        return self.preprocess(x)
     
 
 class DecoderBlock(nn.Module):
@@ -117,6 +115,7 @@ class DecoderBlock(nn.Module):
         
         self.normlayer1=nn.LayerNorm(normalized_shape=hp.embedding_size)
         self.normlayer2=nn.LayerNorm(normalized_shape=hp.embedding_size)
+        self.normlayer3=nn.LayerNorm(normalized_shape=hp.embedding_size)
         self.self_attn=MultiHeadAttentionBlock()
         self.attn=MultiHeadAttentionBlock()
         self.linear1=nn.Linear(hp.embedding_size,hp.dim_feedforward)
@@ -138,6 +137,7 @@ class DecoderBlock(nn.Module):
         x_out=self.dropout3(self.linear1(x))
         x_out=self.dropout4(self.linear2(x_out))
         x=x+x_out
+        x=self.normlayer3(x)
         return x
         
 
@@ -184,6 +184,7 @@ class SimpleTransformer(nn.Module):
         self.encoder_block3=EncoderBlock()
         
         # norm_memory
+        self.norm_memory=nn.LayerNorm(normalized_shape=hp.embedding_size)
         
         self.preprocess_mel_spec=PreProcess_Mel_Spec()
         
@@ -195,13 +196,16 @@ class SimpleTransformer(nn.Module):
         
     def forward(self,mel,text):
         text_out=self.input_embeddings(text)
-        text_out=self.positional_embeddings(text_out)
-        
+        pos_encodings=self.positional_embeddings()
+        text_out=text_out+pos_encodings[:text_out.shape[1]]
         text_out=self.encoder_block1(text_out)
         text_out=self.encoder_block2(text_out)
         text_out=self.encoder_block3(text_out)
         # norm memory
+        text_out=self.norm_memory(text_out)
+        
         mel_out=self.preprocess_mel_spec(mel)
+        mel_out=mel_out+pos_encodings[:mel_out.shape[1]]
         
         mel_out=self.decoder_block1(mel_out,text_out)
         mel_out=self.decoder_block2(mel_out,text_out)
